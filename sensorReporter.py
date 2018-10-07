@@ -185,7 +185,7 @@ def createConnection(config, section):
       params = lambda key: config.get(section, key)
       connections[name] = MyConn(on_message, logger, params, sensors, actuators)
     except ImportError:
-      logger.error("%s.%s is not supported on this platform" % module_name, class_name)
+      logger.error("%s.%s is not supported on this platform" % (module_name, class_name))
 
 
 def loadConfig(configFile):
@@ -199,7 +199,7 @@ def loadConfig(configFile):
 
     level = "INFO"
     if config.has_option("Logging", "Level"):
-      level - config.get("Logging", "Level")
+      level = config.get("Logging", "Level")
 
     if syslog == "YES":
       configLogger("", -1, -1, "YES", level)
