@@ -18,10 +18,12 @@
  Date:   24 June 2018
  Purpose: Reads the GPS state and publishes any changes
 """
-import gpsd
+from gps3 import gps3
+import json
 
 
 import ConfigParser
+import traceback
 
 
 # install dateutil using apt-get install python-dateutil
@@ -29,16 +31,15 @@ import ConfigParser
 import dateutil.parser as dp
 import time
 
-
-
 class GPSSensor:
     """Represents a GPS sensor available via gpsd"""
 
 
     def __init__(self, connections, logger, params, sensors, actuators):
         """Sets the sensor pin to pud and publishes its current value"""
-
+        self.poll = float(params("Poll"))
         self.lastpoll = time.time()
+        self.destination = params("Destination")
 
         #Initialise to some time ago (make sure it publishes)
         self.lastPublish = time.time() - 1000
@@ -46,6 +47,10 @@ class GPSSensor:
         self.logger = logger
         
         try:
+            if (params("Filter")):
+                self.filter = params("Filter").split(",")
+            else:
+                self.filter = None
             pass
             #if (params("Scale") == 'F'):
             #    self.useF = True
@@ -55,8 +60,10 @@ class GPSSensor:
         # connect to gpsd
         
         self.logger.info("----------Connecting to GPS Sensor")     
-        gpsd.connect()
+        self.gps_socket = gps3.GPSDSocket()
         
+        self.gps_socket.connect()
+        self.gps_socket.watch()
         
 
         self.publish = connections
@@ -69,13 +76,30 @@ class GPSSensor:
     def checkState(self):
         # our state will always be different because our time will be different.
         
+        # we want to continue to read from the gpsd until we get a TPV packet.
+        
         try:
-            self.lastGpsPacket = gpsd.get_current()
-             
-            self.publishState()
+            
+            tpvRead = False
+            
+            while not tpvRead:
+                self.gpsJsonPacket = self.gps_socket.next()
+                if self.gpsJsonPacket:
+                
+                    self.gpsPacket = json.loads(self.gpsJsonPacket)
+                    
+                    self.gpsSentenceType = self.gpsPacket['class']
+                    
+                    # we'll publish anything that comes out of gpsd, including any SKY sentences.
+                    self.publishState()
+                    
+                    if self.gpsSentenceType == 'TPV':
+                        tpvRead = True
+                    
+            
         except Exception as e:
             self.logger.error("----------Error reading from GPS " + str(e))
-
+            
     def publishStateImpl(self, data, destination):
         for conn in self.publish:
             conn.publish(data, destination)
@@ -83,40 +107,15 @@ class GPSSensor:
     def publishState(self):
         """Publishes the current state"""
         didPublish = False
-        
-        '''
-        :var self.mode: Indicates the status of the GPS reception, 0=No value, 1=No fix, 2=2D fix, 3=3D fix
-        :var self.sats: The number of satellites received by the GPS unit
-        :var self.lon: Longitude in degrees
-        :var self.lat: Latitude in degrees
-        :var self.alt: Altitude in meters
-        :var self.track: Course over ground, degrees from true north
-        :var self.hspeed: Speed over ground, meters per second
-        :var self.climb: Climb (positive) or sink (negative) rate, meters per second
-        :var self.time: Time/date stamp in ISO8601 format, UTC. May have a fractional part of up to .001sec precision.
-        :var self.error: GPSD error margin information
-
-        GPSD error margin information
-        -----------------------------
-
-        c: ecp: Climb/sink error estimate in meters/sec, 95% confidence.
-        s: eps: Speed error estinmate in meters/sec, 95% confidence.
-        t: ept: Estimated timestamp error (%f, seconds, 95% confidence).
-        v: epv: Estimated vertical error in meters, 95% confidence. Present if mode is 3 and DOPs can be
-                calculated from the satellite view.
-        x: epx: Longitude error estimate in meters, 95% confidence. Present if mode is 2 or 3 and DOPs
-                can be calculated from the satellite view.
-        y: epy: Latitude error estimate in meters, 95% confidence. Present if mode is 2 or 3 and DOPs can
-                be calculated from the satellite view.
-        '''
-        
-        if (self.lastGpsPacket):
-            gpsJson = lastGpsPacket.dumps(lastGpsPacket)
-            self.publishStateImpl(gpsJson, self.destination + "/gpsInfo")
-            disPublish = True
+                
+        if (self.gpsJsonPacket):
             
+            
+            # if we have a filter, check that our sentence type is in the filter
+            if self.filter and self.gpsSentenceType in self.filter:
+                
+                self.publishStateImpl(str(self.gpsJsonPacket) , self.destination + "/" + self.gpsSentenceType)
+                didPublish = True
+                
         if (didPublish):
             self.lastPublish = time.time()
-
-
-    
