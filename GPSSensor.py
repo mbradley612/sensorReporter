@@ -20,6 +20,7 @@
 """
 from gps3 import gps3
 import json
+import threading
 
 
 import ConfigParser
@@ -31,6 +32,54 @@ import traceback
 import dateutil.parser as dp
 import time
 
+class GPSDReceiver:
+    """
+    Encapsulates the connection to GPSD
+    Reads the stream of sentences from GPSD, and stores the latest version of each for polling.
+    
+    Runs its own thread for reading the stream from gpsd
+    """
+    def __init__(self, host="127.0.0.1",port=2937):
+        
+        self.gps = gps3.GPSDSocket()
+        self.isRunning = False
+        self.latestSentences = {}
+        self.host = host
+        self.port = port
+        
+    def run(self):
+        self.gps.connect(host=self.host,port=self.port)
+        self.gps.watch()
+        
+        self.isRunning = True
+        
+        while self.isRunning:
+            # ready the next packet
+            gpsJsonPacket = self.gps.next()
+            
+            if gpsJsonPacket:
+                
+                
+                
+                # load the json
+                gpsPacket = json.loads(gpsJsonPacket)
+                # retrieve the sentenceType
+                sentenceType = gpsPacket['class']
+                
+                # update the latest data
+                self.latestSentences[sentenceType] = gpsPacket
+                
+                
+    def latestSentences(self):
+        # shallow copy our dictionary and return it
+        return dict(self.latestSentences)        
+            
+            
+    def stop(self):
+        self.isRunning = False
+        self.gps.watch(enable=False)
+        
+
 class GPSSensor:
     """Represents a GPS sensor available via gpsd"""
 
@@ -40,8 +89,8 @@ class GPSSensor:
     
     def __init__(self, connections, logger, params, sensors, actuators):
         """Sets the sensor pin to pud and publishes its current value"""
-        self.poll = float(params("Poll"))
-        self.lastpoll = time.time()
+        #self.poll = float(params("Poll"))
+        
         self.destination = params("Destination")
 
         #Initialise to some time ago (make sure it publishes)
@@ -49,10 +98,13 @@ class GPSSensor:
 
         self.logger = logger
         
+        self.poll = float(params("Poll"))
+
+        
         try:
             self.sentenceTypes = params("SentenceTypes").split(",")
             
-            self.timeout = float(params("Timeout"))
+        
             
             #if (params("Scale") == 'F'):
             #    self.useF = True
@@ -71,114 +123,33 @@ class GPSSensor:
         except ConfigParser.NoOptionError:
             gpsHost, gpsPort = ['localhost',2947]
 
-        # connect to gpsd
+        self.publish = connections 
         
-        self.logger.info("----------Connecting to GPS Sensor")     
-        self.gps_socket = gps3.GPSDSocket()
-        
-        
-        
-        self.gps_socket.connect(host=gpsHost,port=gpsPort)
-        self.gps_socket.watch()
-        
+        # create our gpsreceiver object
+        self.gpsdReceiver = GPSDReceiver(host=gpsHost, port=gpsPort)
 
-        self.publish = connections
-
+        self.gpsdReceiverThread = threading.Thread(target = self.gpsdReceiver.run)
+        self.gpsdReceiverThread.daemon=False
+        
+        self.gpsdReceiverThread.start()
+        
         
         self.checkState()
         
         
-    def readGpsd(self, sentenceType, timeout=0):
-        """Carry on reading from gpsd until we read the target sentencetype, or timeout.
-        Arguments:
-        timeout: Default timeout=0  range zero to float specifies a time-out as a floating point
-        number in seconds.  Will sit and wait for timeout seconds.  When the timeout argument is omitted
-        the function blocks until at least one file descriptor is ready. A time-out value of zero specifies
-        a poll and never blocks.
-        """
-        try:
-            
-            hasReadSentenceType = False
-            gpsPacket = None
-            remainingTimeout = timeout
-            
-            # need to calculate the remaining timeout
-            while not hasReadSentenceType and (timeout == 0 or remainingTimeout > 0):
-                startTime = time.time()
-                self.gpsJsonPacket = self.gps_socket.next()#timeout = remainingTimeout)
-                endTime = time.time()
-                remainingTimeout = remainingTimeout - (endTime - startTime)
-                
-                if self.gpsJsonPacket:
-                
-                    gpsPacket = json.loads(self.gpsJsonPacket)
-                    
-                    if gpsPacket['class'] == sentenceType:
-                        hasReadSentenceType = True
-            
-            return gpsPacket
-            
-        except Exception as e:
-            self.logger.error("----------Error reading from GPS " + str(e))
-            
-            print(traceback.format_exc())
-    
-
+    def cleanup(self):
+        self.gpsdReceiver.isRunning = False
 
     def checkState(self):
-        # we have a logical order to read in, based on the period that the data comes from our sensors
+        # strategy is to get the latest data from our receiver, filtered for the sentences that we are interested in
         
-        # SKY - every few seconds.
-        # TPV - approx 1 second
-        # IMU - instant read
+        latestSentences = self.gpsdReceiver.latestSentences
         
-        # create a dictionary for our data to publish
+        self.filteredGpsData = {sentenceType: latestSentences[sentenceType] for sentenceType in self.sentenceTypes if sentenceType in latestSentences}
         
-        self.dataToPublish = {}
         
-        # take a copy of the sentences that we need to read
-        sentencesToRead = list(self.sentenceTypes)
+        self.publishState()
         
-        # capture the current time
-        startTime = time.time()
-        
-        # calculate our end time
-        endTime = startTime + self.timeout
-        
-        # we loop reading from gpsd until we're out of time
-        while len(sentencesToRead) > 0 and time.time() < endTime:
-            
-            try:
-                
-                # read the next packet from gpsd
-                gpsJsonPacket = self.gps_socket.next()
-                
-                             
-                if gpsJsonPacket:
-                    # convert from Json to dictionary
-                    gpsPacket = json.loads(gpsJsonPacket)
-                    
-                    # figure out what class it is
-                    gpsPacketClass = gpsPacket['class']
-                    
-                    # if we haven't already read this class of packet, remove it from our sentences to read
-                    if gpsPacketClass in sentencesToRead:
-                        
-                        sentencesToRead.remove(gpsPacketClass)
-                    
-                    # if this is one of our sen
-                        
-                    # update our data
-                    self.dataToPublish[gpsPacketClass] = gpsPacket
-                    
-            except Exception as e:
-                self.logger.error("----------Error reading from GPS " + str(e))
-                
-                print(traceback.format_exc())
-        
-        if len(self.dataToPublish) > 0:
-        
-            self.publishState()   
             
     def publishStateImpl(self, data, destination):
         for conn in self.publish:
@@ -188,10 +159,10 @@ class GPSSensor:
         """Publishes the current state"""
         didPublish = False
         
-        dataToPublishJson = json.dumps(self.dataToPublish)
+        dataToPublishJson = json.dumps(self.filteredGpsData)
         
         self.publishStateImpl(dataToPublishJson , self.destination )
-        didPublish = True
+        didPublish = True 
                 
         if (didPublish):
             self.lastPublish = time.time()
