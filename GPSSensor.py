@@ -54,8 +54,8 @@ class GPSDReceiver:
         self.isRunning = True
         
         while self.isRunning:
-            # ready the next packet
-            gpsJsonPacket = self.gps.next()
+            # read the next packet, block for max of 0.25 seconds
+            gpsJsonPacket = self.gps.next(timeout=0.25)
             
             if gpsJsonPacket:
                 
@@ -101,15 +101,9 @@ class GPSSensor:
         self.poll = float(params("Poll"))
 
         
-        try:
-            self.sentenceTypes = params("SentenceTypes").split(",")
-            
         
-            
-            #if (params("Scale") == 'F'):
-            #    self.useF = True
-        except ConfigParser.NoOptionError:
-            pass
+        
+        
         
         try:
             gpsConnection = params("GpsConnection")
@@ -122,6 +116,33 @@ class GPSSensor:
             #    self.useF = True
         except ConfigParser.NoOptionError:
             gpsHost, gpsPort = ['localhost',2947]
+            
+        try:
+            self.sentenceTypes = params("SentenceTypes").split(",")
+            
+        
+            
+            #if (params("Scale") == 'F'):
+            #    self.useF = True
+        except ConfigParser.NoOptionError:
+            # we default to TPV only
+            self.sentenceTypes = "TPV"
+        
+        
+        try:
+            # we split the list on , and = characters
+            passThruParamsList = params("passThruParams").split(";")
+            # create a dictionary
+            self.passThruParams = {}
+            for param in passThruParamsList:
+                
+                (key,value) = param.split("=")
+                self.passThruParams[key] = value
+            
+        
+        except ConfigParser.NoOptionError:
+            # we default to an empty dictionary
+            self.passThruParams = {}
 
         self.publish = connections 
         
@@ -158,6 +179,9 @@ class GPSSensor:
     def publishState(self):
         """Publishes the current state"""
         didPublish = False
+        
+        # add our passThruParams
+        self.filteredGpsData.update(self.passThruParams)
         
         dataToPublishJson = json.dumps(self.filteredGpsData)
         
