@@ -23,6 +23,9 @@ import math
 import IMU
 import datetime
 import os
+import threading
+from Queue import Queue, Empty
+import signal
 # If the IMU is upside down (Skull logo facing up), change this value to 1
 IMU_UPSIDE_DOWN = 0
 
@@ -36,6 +39,13 @@ ACC_LPF_FACTOR = 0.4 	# Low pass filter constant for accelerometer
 ACC_MEDIANTABLESIZE = 9    	# Median filter table size for accelerometer. Higher = smoother but a longer delay
 MAG_MEDIANTABLESIZE = 9    	# Median filter table size for magnetometer. Higher = smoother but a longer delay
 
+# how long to block waiting for a calculation
+READ_TIMEOUT=0.5
+# how long to sleep in each loop
+LOOP_SLEEP=0.1
+# internal string to represent a command
+COMMAND_READ_IMU = "read_imu"
+COMMAND_STOP = "stop"
 
 
 ################# Compass Calibration values ############
@@ -157,6 +167,10 @@ def kalmanFilterX ( accAngle, gyroRate, DT):
 
 
 
+#
+# Internal class
+#
+
 class berryIMU:
 	def __init__(self):
 		self.gyroXangle = 0.0
@@ -193,12 +207,29 @@ class berryIMU:
 		self.mag_medianTable2Y = [1] * MAG_MEDIANTABLESIZE
 		self.mag_medianTable2Z = [1] * MAG_MEDIANTABLESIZE
 		
+		
+		# create a queue for handling commands
+		self.commandQueue = Queue()
+		# create a queue for reading the latest response
+		self.latestImuQueue = Queue()
+		
 		IMU.detectIMU()     #Detect if BerryIMUv1 or BerryIMUv2 is connected.
 		IMU.initIMU()       #Initialise the accelerometer, gyroscope and compass
+		
+	
+	def stop(self):
+		self.commandQueue.put(COMMAND_STOP)
+		
+	def readLatestIMU(self):
+		self.commandQueue.put(COMMAND_READ_IMU)
+		
+		return self.latestImuQueue.get(timeout=READ_TIMEOUT)
 
-
+	# this should be the target for a thread to start
 	def run(self):
-		while True:
+		self.isRunning = True
+		
+		while self.isRunning:
 			#Read the accelerometer,gyroscope and magnetometer values
 			ACCx = IMU.readACCx()
 			ACCy = IMU.readACCy()
@@ -325,31 +356,31 @@ class berryIMU:
 			
 			if not IMU_UPSIDE_DOWN:
 			# If the IMU is up the correct way (Skull logo facing down), use these calculations
-				AccXangle =  (math.atan2(ACCy,ACCz)*RAD_TO_DEG)
-				AccYangle =  (math.atan2(ACCz,ACCx)+M_PI)*RAD_TO_DEG
+				self.AccXangle =  (math.atan2(ACCy,ACCz)*RAD_TO_DEG)
+				self.AccYangle =  (math.atan2(ACCz,ACCx)+M_PI)*RAD_TO_DEG
 			else:
 			#Us these four lines when the IMU is upside down. Skull logo is facing up
-				AccXangle =  (math.atan2(-ACCy,-ACCz)*RAD_TO_DEG)
-				AccYangle =  (math.atan2(-ACCz,-ACCx)+M_PI)*RAD_TO_DEG
+				self.AccXangle =  (math.atan2(-ACCy,-ACCz)*RAD_TO_DEG)
+				self.AccYangle =  (math.atan2(-ACCz,-ACCx)+M_PI)*RAD_TO_DEG
 			# end if else
 			
 			
 			#Change the rotation value of the accelerometer to -/+ 180 and
 			#move the Y axis '0' point to up.  This makes it easier to read.
-			if AccYangle > 90:
-				AccYangle -= 270.0
+			if self.AccYangle > 90:
+				self.AccYangle -= 270.0
 			else:
-				AccYangle += 90.0
+				self.AccYangle += 90.0
 			# end if else
 			
 			
 			#Complementary filter used to combine the accelerometer and gyro values.
-			self.CFangleX=AA*(self.CFangleX+rate_gyr_x*LP) +(1 - AA) * AccXangle
-			self.CFangleY=AA*(self.CFangleY+rate_gyr_y*LP) +(1 - AA) * AccYangle
+			self.CFangleX=AA*(self.CFangleX+rate_gyr_x*LP) +(1 - AA) * self.AccXangle
+			self.CFangleY=AA*(self.CFangleY+rate_gyr_y*LP) +(1 - AA) * self.AccYangle
 			
 			#Kalman filter used to combine the accelerometer and gyro values.
-			self.kalmanY = kalmanFilterY(AccYangle, rate_gyr_y,LP)
-			self.kalmanX = kalmanFilterX(AccXangle, rate_gyr_x,LP)
+			self.kalmanY = kalmanFilterY(self.AccYangle, rate_gyr_y,LP)
+			self.kalmanX = kalmanFilterX(self.AccXangle, rate_gyr_x,LP)
 			
 			if IMU_UPSIDE_DOWN:
 				MAGy = -MAGy      #If IMU is upside down, this is needed to get correct heading.
@@ -372,7 +403,7 @@ class berryIMU:
 			#Use these two lines when the IMU is up the right way. Skull logo is facing down
 				accXnorm = ACCx/math.sqrt(ACCx * ACCx + ACCy * ACCy + ACCz * ACCz)
 				accYnorm = ACCy/math.sqrt(ACCx * ACCx + ACCy * ACCy + ACCz * ACCz)
-				else:
+			else:
 			#Us these four lines when the IMU is upside down. Skull logo is facing up
 				accXnorm = -ACCx/math.sqrt(ACCx * ACCx + ACCy * ACCy + ACCz * ACCz)
 				accYnorm = ACCy/math.sqrt(ACCx * ACCx + ACCy * ACCy + ACCz * ACCz)
@@ -407,30 +438,90 @@ class berryIMU:
 			############################ END ##################################
 			
 			
-			if 1:			#Change to '0' to stop showing the angles from the accelerometer
-				print ("# ACCX Angle %5.2f ACCY Angle %5.2f #  " % (AccXangle, AccYangle)),
+			if 0:			#Change to '0' to stop showing the angles from the accelerometer
+				print ("# ACCX Angle %5.2f ACCY Angle %5.2f #  " % (self.AccXangle, self.AccYangle)),
 			
-			if 1:			#Change to '0' to stop  showing the angles from the gyro
+			if 0:			#Change to '0' to stop  showing the angles from the gyro
 				print ("\t# GRYX Angle %5.2f  GYRY Angle %5.2f  GYRZ Angle %5.2f # " % (self.gyroXangle,self.gyroYangle,self.gyroZangle)),
 			
-			if 1:			#Change to '0' to stop  showing the angles from the complementary filter
+			if 0:			#Change to '0' to stop  showing the angles from the complementary filter
 				print ("\t# self.CFangleX Angle %5.2f   self.CFangleY Angle %5.2f #" % (self.CFangleX,self.CFangleY)),
 			
-			if 1:			#Change to '0' to stop  showing the heading
+			if 0:			#Change to '0' to stop  showing the heading
 				print ("\t# HEADING %5.2f  tiltCompensatedHeading %5.2f #" % (self.heading,self.tiltCompensatedHeading)),
 			
-			if 1:			#Change to '0' to stop  showing the angles from the Kalman filter
+			if 0:			#Change to '0' to stop  showing the angles from the Kalman filter
 				print ("# self.kalmanX %5.2f   self.kalmanY %5.2f #" % (self.kalmanX,self.kalmanY)),
 			
 			    #print a new line
 			print ""
-			    
+			
+			try:
+				# check the command queue
+				if not self.commandQueue.empty():
+					# we have a command, so get it. We should only have one thread reading this queue, 
+					# so there should always be something there.
+					command = self.commandQueue.get_nowait()
+					
+					if command==COMMAND_READ_IMU:
+						latestImu = {
+									"accXangle": self.AccXangle,
+									"accYangle": self.AccYangle,
+									"gyroXangle": self.gyroXangle,
+									"gyroYangle": self.gyroYangle,
+									"gyroZangle": self.gyroZangle,
+									"CFangleX" : self.CFangleX,
+									"CFangleY" : self.CFangleY,
+									"CFangleXFiltered" : self.CFangleXFiltered,
+									"CFangleYFiltered" : self.CFangleYFiltered,
+									"heading" : self.heading,
+									"tiltCompensatedHeading" : self.tiltCompensatedHeading,
+									"kalmanX" : self.kalmanX,
+									"kalmanY" : self.kalmanY
+									}
+						self.latestImuQueue.put(latestImu)
+					if command==COMMAND_STOP:
+						self.isRunning = False
+			except Empty:
+				# this shouldn't happen
+				pass
+					
+			
 			    
 			#slow program down a bit, makes the output more readable
-			time.sleep(0.25)
+			time.sleep(LOOP_SLEEP)
+
+'''
+This class is for use by the main module
+'''
+class BerryIMURunner:
+	def __init__(self):
+		self.b = berryIMU()
+		self.t = threading.Thread(target=b.run)
+		self.t.daemon=False
+		
+		signal.signal(signal.SIGINT, self.signalStop)
+		signal.signal(signal.SIGTERM, self.signalStop)
+
+	def signalStop(self,signum,frame):
+		self.b.stop()
+
 	
+	def start(self):
+		self.t.start()
+		
+	def readLatestIMU(self):
+		return self.b.readLatestIMU()
+		
 
+# this code runs if this module is run as the main module	
+if __name__ == "__main__":
+	
+	runner = BerryIMURunner()
+	
+	runner.start()
 
-b = berryIMU()
-
-b.run()
+	while True:
+		latestImu = runner.readLatestIMU()
+		print latestImu
+		time.sleep(0.5)
