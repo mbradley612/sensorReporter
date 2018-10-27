@@ -93,6 +93,12 @@ KFangleY = 0.0
 
 
 
+
+
+		
+
+
+
 def kalmanFilterY ( accAngle, gyroRate, DT):
 	y=0.0
 	S=0.0
@@ -171,7 +177,7 @@ def kalmanFilterX ( accAngle, gyroRate, DT):
 # Internal class
 #
 
-class berryIMU:
+class BerryIMUReader:
 	def __init__(self):
 		self.gyroXangle = 0.0
 		self.gyroYangle = 0.0
@@ -218,12 +224,22 @@ class berryIMU:
 		
 	
 	def stop(self):
+		print "Putting stop on command queue"
 		self.commandQueue.put(COMMAND_STOP)
-		
+	
+	
+	'''
+	return the latestIMU reading, or None if none available
+	'''
 	def readLatestIMU(self):
 		self.commandQueue.put(COMMAND_READ_IMU)
 		
-		return self.latestImuQueue.get(timeout=READ_TIMEOUT)
+		try:
+			latestIMU =  self.latestImuQueue.get(timeout=READ_TIMEOUT)
+		except Empty:
+			latestIMU = None
+			
+		return None
 
 	# this should be the target for a thread to start
 	def run(self):
@@ -252,7 +268,7 @@ class berryIMU:
 			b = datetime.datetime.now() - self.a
 			a = datetime.datetime.now()
 			LP = b.microseconds/(1000000*1.0)
-			print "Loop Time | %5.2f|" % ( LP ),
+			#print "Loop Time | %5.2f|" % ( LP ),
 			
 			
 			
@@ -454,7 +470,8 @@ class berryIMU:
 				print ("# self.kalmanX %5.2f   self.kalmanY %5.2f #" % (self.kalmanX,self.kalmanY)),
 			
 			    #print a new line
-			print ""
+			if 0:
+				print ""
 			
 			try:
 				# check the command queue
@@ -481,6 +498,7 @@ class berryIMU:
 									}
 						self.latestImuQueue.put(latestImu)
 					if command==COMMAND_STOP:
+						print "Stopping ..."
 						self.isRunning = False
 			except Empty:
 				# this shouldn't happen
@@ -490,21 +508,27 @@ class berryIMU:
 			    
 			#slow program down a bit, makes the output more readable
 			time.sleep(LOOP_SLEEP)
+		
+		print "Out of main loop"
 
 '''
-This class is for use by the main module
+This class is for use by the external facing functions.
 '''
 class BerryIMURunner:
 	def __init__(self):
-		self.b = berryIMU()
-		self.t = threading.Thread(target=b.run)
+		self.b = BerryIMUReader()
+		self.t = threading.Thread(target=self.run)
 		self.t.daemon=False
 		
-		signal.signal(signal.SIGINT, self.signalStop)
-		signal.signal(signal.SIGTERM, self.signalStop)
+		#signal.signal(signal.SIGINT, self.signalStop)
+		#signal.signal(signal.SIGTERM, self.signalStop)
+		pass
 
 	def signalStop(self,signum,frame):
 		self.b.stop()
+		
+	def run(self):
+		self.b.run()
 
 	
 	def start(self):
@@ -512,16 +536,22 @@ class BerryIMURunner:
 		
 	def readLatestIMU(self):
 		return self.b.readLatestIMU()
-		
+
+# module wide variable. This gets run when the module is loaded
+runner = BerryIMURunner()
+runner.start()
+
+def latestIMU():
+	return runner.readLatestIMU()
 
 # this code runs if this module is run as the main module	
 if __name__ == "__main__":
 	
-	runner = BerryIMURunner()
 	
-	runner.start()
-
 	while True:
-		latestImu = runner.readLatestIMU()
-		print latestImu
+		
+		#latest = latestIMU()
+		latest = "Hello"
+		if latest:
+			print latest
 		time.sleep(0.5)
