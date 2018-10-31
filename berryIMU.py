@@ -15,6 +15,20 @@
 #
 
 
+'''
+This module provides a multi-client interface to a single object that measures IMU readings and
+calculates filtered readings. We can only have one connection to the IMU interface via the I2C
+physical interface, and to perform the filtered calculations, we need our own thread.
+
+To create "singleton" type behaviour, we use the "Borg" pattern, see 
+https://www.oreilly.com/library/view/python-cookbook/0596001673/ch05s23.html
+
+Each client invokes our start method to start us, and invokes stop to stop us. We use this
+to keep track of the number of clients. On first start, we start our thread. On last stop,
+we stop our thread.
+
+'''
+
 
 
 import sys
@@ -224,7 +238,6 @@ class BerryIMUReader:
 		
 	
 	def stop(self):
-		print "Putting stop on command queue"
 		self.commandQueue.put(COMMAND_STOP)
 	
 	
@@ -236,6 +249,7 @@ class BerryIMUReader:
 		
 		try:
 			latestIMU =  self.latestImuQueue.get(timeout=READ_TIMEOUT)
+			return latestIMU
 		except Empty:
 			latestIMU = None
 			
@@ -481,6 +495,7 @@ class BerryIMUReader:
 					command = self.commandQueue.get_nowait()
 					
 					if command==COMMAND_READ_IMU:
+						print "Processing read IMU command"
 						latestImu = {
 									"accXangle": self.AccXangle,
 									"accYangle": self.AccYangle,
@@ -498,7 +513,6 @@ class BerryIMUReader:
 									}
 						self.latestImuQueue.put(latestImu)
 					if command==COMMAND_STOP:
-						print "Stopping ..."
 						self.isRunning = False
 			except Empty:
 				# this shouldn't happen
@@ -509,49 +523,90 @@ class BerryIMUReader:
 			#slow program down a bit, makes the output more readable
 			time.sleep(LOOP_SLEEP)
 		
-		print "Out of main loop"
+	
+class Borg:
+    _shared_state = {}
+    def __init__(self):
+        self.__dict__ = self._shared_state
 
 '''
 This class is for use by the external facing functions.
 '''
-class BerryIMURunner:
+class BerryIMU(Borg):
 	def __init__(self):
+		Borg.__init__(self)
 		self.b = BerryIMUReader()
-		self.t = threading.Thread(target=self.run)
+		self.startCount = 0
+		self.t = threading.Thread(target=self.b.run)
 		self.t.daemon=False
 		
 		#signal.signal(signal.SIGINT, self.signalStop)
 		#signal.signal(signal.SIGTERM, self.signalStop)
 		pass
-
-	def signalStop(self,signum,frame):
-		self.b.stop()
-		
+	
 	def run(self):
-		self.b.run()
-
+		while not self.startCount == 0:
+			time.sleep(0.5)
 	
 	def start(self):
-		self.t.start()
+		
+		# if we haven't already been started, start out thread
+		if self.startCount == 0:
+			self.t.start()
+		self.startCount += 1
+	
+
+	def stop(self):
+		self.startCount -= 1
+		
+		# it our startstop count is now 0, tell our reader to stop
+		if self.startCount ==0:
+			self.b.stop()
+		
+
+	
 		
 	def readLatestIMU(self):
 		return self.b.readLatestIMU()
 
-# module wide variable. This gets run when the module is loaded
-runner = BerryIMURunner()
-runner.start()
-
 def latestIMU():
 	return runner.readLatestIMU()
 
+
+
+class ServiceExit(Exception):
+    """
+    Custom exception which is used to trigger the clean exit
+    of all running threads and the main program.
+    """
+    pass
+ 
+ 
+def service_shutdown(signum, frame):
+    raise ServiceExit
+
+
 # this code runs if this module is run as the main module	
 if __name__ == "__main__":
+
+
+	signal.signal(signal.SIGTERM, service_shutdown)
+	signal.signal(signal.SIGINT, service_shutdown)
+
+	
+	# module wide variable. This gets run when the module is loaded
+	runner = BerryIMU()
+	runner.start()
+
 	
 	
-	while True:
+	try:
+		while True:
 		
-		#latest = latestIMU()
-		latest = "Hello"
-		if latest:
-			print latest
-		time.sleep(0.5)
+			#latest = latestIMU()
+			latest = latestIMU()
+			if latest:
+				print latest
+			time.sleep(0.5)
+	except ServiceExit:
+		runner.stop()
