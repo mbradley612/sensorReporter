@@ -522,6 +522,7 @@ class BerryIMUReader:
 			    
 			#slow program down a bit, makes the output more readable
 			time.sleep(LOOP_SLEEP)
+		print "BerryIMUReader loop ended"
 		
 '''
 This class is for use by the external facing functions.
@@ -565,17 +566,12 @@ def connect():
 
 def readLatestIMU():
 	return _berryIMUReader.readLatestIMU()
-
-class ServiceExit(Exception):
-    """
-    Custom exception which is used to trigger the clean exit
-    of all running threads and the main program.
-    """
-    pass
  
  
 def service_shutdown(signum, frame):
-    raise ServiceExit
+	global isRunning
+	print "Handling shutdown" 
+	isRunning = False
 
 
 # this code runs if this module is run as the main module	
@@ -589,19 +585,22 @@ if __name__ == "__main__":
 	# module wide variable. This gets run when the module is loaded
 	myIMU = connect()
 	myIMU2 = connect()
+	isRunning = True
 	
 	
-	try:
-		while True:
-		
-			#latest = latestIMU()
-			latest = myIMU.readLatestIMU()
-			latest2 = myIMU2.readLatestIMU()
-			if latest:
-				#print str(latest) + "\n 2:" + str(latest2)
-			#print latest
-				pass
-			time.sleep(0.5)
-	except ServiceExit:
-		myIMU.disconnect()
-		
+	
+	while isRunning:
+	
+		#latest = latestIMU()
+		latest = myIMU.readLatestIMU()
+		latest2 = myIMU2.readLatestIMU()
+		if latest:
+			print str("1: " + str(latest))
+		if latest2:
+			print("\n 2:" + str(latest2))
+		time.sleep(0.5)
+
+	myIMU.disconnect()
+	myIMU2.disconnect()
+	
+	print "Shutdown complete"
