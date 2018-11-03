@@ -522,7 +522,6 @@ class BerryIMUReader:
 			    
 			#slow program down a bit, makes the output more readable
 			time.sleep(LOOP_SLEEP)
-		print "BerryIMUReader loop ended"
 		
 '''
 This class is for use by the external facing functions.
@@ -584,7 +583,6 @@ if __name__ == "__main__":
 	
 	# module wide variable. This gets run when the module is loaded
 	myIMU = connect()
-	myIMU2 = connect()
 	isRunning = True
 	
 	
@@ -595,12 +593,10 @@ if __name__ == "__main__":
 		latest = myIMU.readLatestIMU()
 		latest2 = myIMU2.readLatestIMU()
 		if latest:
-			print str("1: " + str(latest))
-		if latest2:
-			print("\n 2:" + str(latest2))
+			print str(str(latest))
 		time.sleep(0.5)
 
 	myIMU.disconnect()
-	myIMU2.disconnect()
+	
 	
 	print "Shutdown complete"

@@ -31,6 +31,9 @@ import traceback
 
 import dateutil.parser as dp
 import time
+import sys
+
+import berryIMU
 
 class GPSDReceiver:
     """
@@ -60,7 +63,7 @@ class GPSDReceiver:
             if gpsJsonPacket:
                 
                 
-                
+            
                 # load the json
                 gpsPacket = json.loads(gpsJsonPacket)
                 # retrieve the sentenceType
@@ -118,15 +121,12 @@ class GPSSensor:
             gpsHost, gpsPort = ['localhost',2947]
             
         try:
-            self.sentenceTypes = params("SentenceTypes").split(",")
+            self.sentenceTypes = params("GpsSentenceTypes").split(",")
             
         
-            
-            #if (params("Scale") == 'F'):
-            #    self.useF = True
         except ConfigParser.NoOptionError:
             # we default to TPV only
-            self.sentenceTypes = "TPV"
+            self.sentenceTypes = ""
         
         
         try:
@@ -143,7 +143,26 @@ class GPSSensor:
         except ConfigParser.NoOptionError:
             # we default to an empty dictionary
             self.passThruParams = {}
+        
+        
+            
+        try:
+            # we split the list on , and = characters
+            addLatestImuParam = params("IMU")
+            # create a dictionary
+            if addLatestImuParam == "Y":
+                
+                self.addLatestImu = True
+            else:
+                self.addLatestImu = False
+            
+        
+        except ConfigParser.NoOptionError:
+            # we default to an empty dictionary
+            self.addLatestImu = False
 
+        
+        
         self.publish = connections 
         
         # create our gpsreceiver object
@@ -152,7 +171,12 @@ class GPSSensor:
         self.gpsdReceiverThread = threading.Thread(target = self.gpsdReceiver.run)
         self.gpsdReceiverThread.daemon=False
         
+        if self.addLatestImu:
+            self.berryIMU = berryIMU.connect()
+        
         self.gpsdReceiverThread.start()
+        
+        
         
         
         self.checkState()
@@ -160,14 +184,24 @@ class GPSSensor:
         
     def cleanup(self):
         self.gpsdReceiver.isRunning = False
+        if self.addLatestImu:
+            self.berryIMU.disconnect()
 
     def checkState(self):
         # strategy is to get the latest data from our receiver, filtered for the sentences that we are interested in
         
         latestSentences = self.gpsdReceiver.latestSentences
         
+        
+
+        
+        
         self.filteredGpsData = {sentenceType: latestSentences[sentenceType] for sentenceType in self.sentenceTypes if sentenceType in latestSentences}
         
+        # if we are including IMU, do it now
+        if self.addLatestImu:
+            self.filteredGpsData['IMU'] = self.berryIMU.readLatestIMU()
+            
         
         self.publishState()
         

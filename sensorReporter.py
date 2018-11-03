@@ -172,9 +172,10 @@ def createDevice(config, section):
         logger.info("Started thread to to run sensor")
 
       return d
-    except ImportError:
-      logger.error("%s.%s is not supported on this platform" % module_name, class_name)
-
+    except ImportError as error:
+      print(traceback.format_exc())
+      logger.error(error.__class__.__name__ + ": " + error.message)
+                   
 def createConnection(config, section):
 
     try:
