@@ -38,6 +38,7 @@ import IMU
 import datetime
 import os
 import threading
+import abc
 from Queue import Queue, Empty
 import signal
 # If the IMU is upside down (Skull logo facing up), change this value to 1
@@ -495,7 +496,7 @@ class BerryIMUReader:
 					command = self.commandQueue.get_nowait()
 					
 					if command==COMMAND_READ_IMU:
-						print "Processing read IMU command"
+						
 						latestImu = {
 									"accXangle": self.AccXangle,
 									"accYangle": self.AccYangle,
@@ -523,18 +524,28 @@ class BerryIMUReader:
 			#slow program down a bit, makes the output more readable
 			time.sleep(LOOP_SLEEP)
 		
-	
-class Borg:
-    _shared_state = {}
-    def __init__(self):
-        self.__dict__ = self._shared_state
+
 
 '''
 This class is for use by the external facing functions.
 '''
-class BerryIMU(Borg):
+class BerryIMU:
+	__monostate = None
 	def __init__(self):
-		Borg.__init__(self)
+		
+		# note in current state, we are reinitializing every time.
+		# we need to detect if this is our first instance somehow.
+		
+		
+		if not BerryIMU.__monostate:
+			BerryIMU.__monostate = {}
+			
+			self.initializeFirstInstance()
+		else:
+			self.__dict__ = BerryIMU.__monostate
+		
+	def initializeFirstInstance(self):
+		print "Initializing first instance"
 		self.b = BerryIMUReader()
 		self.startCount = 0
 		self.t = threading.Thread(target=self.b.run)
@@ -544,33 +555,32 @@ class BerryIMU(Borg):
 		#signal.signal(signal.SIGTERM, self.signalStop)
 		pass
 	
-	def run(self):
-		while not self.startCount == 0:
-			time.sleep(0.5)
 	
 	def start(self):
 		
-		# if we haven't already been started, start out thread
+	
+		# if we haven't already been started, start our thread
 		if self.startCount == 0:
 			self.t.start()
+		
 		self.startCount += 1
-	
+		print "start count is now: " + str(self.startCount)
 
 	def stop(self):
+		
 		self.startCount -= 1
 		
+		print "start count is now: " + str(self.startCount)
 		# it our startstop count is now 0, tell our reader to stop
 		if self.startCount ==0:
 			self.b.stop()
-		
+			
 
 	
 		
 	def readLatestIMU(self):
 		return self.b.readLatestIMU()
 
-def latestIMU():
-	return runner.readLatestIMU()
 
 
 
@@ -598,15 +608,20 @@ if __name__ == "__main__":
 	runner = BerryIMU()
 	runner.start()
 
+	runner2 = BerryIMU()
+	runner2.start()
+
 	
 	
 	try:
 		while True:
 		
 			#latest = latestIMU()
-			latest = latestIMU()
-			if latest:
-				print latest
+			latest = runner.readLatestIMU()
+			latest2 = runner2.readLatestIMU()
+			#if latest:
+			#	print str(latest) + "\n 2:" + str(latest2)
 			time.sleep(0.5)
 	except ServiceExit:
 		runner.stop()
+		runner2.stop()
