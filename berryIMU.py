@@ -29,8 +29,6 @@ we stop our thread.
 
 '''
 
-
-
 import sys
 import time
 import math
@@ -194,6 +192,7 @@ def kalmanFilterX ( accAngle, gyroRate, DT):
 
 class BerryIMUReader:
 	def __init__(self):
+		
 		self.gyroXangle = 0.0
 		self.gyroYangle = 0.0
 		self.gyroZangle = 0.0
@@ -524,65 +523,48 @@ class BerryIMUReader:
 			#slow program down a bit, makes the output more readable
 			time.sleep(LOOP_SLEEP)
 		
-
-
 '''
 This class is for use by the external facing functions.
 '''
-class BerryIMU:
-	__monostate = None
-	def __init__(self):
-		
-		# note in current state, we are reinitializing every time.
-		# we need to detect if this is our first instance somehow.
-		
-		
-		if not BerryIMU.__monostate:
-			BerryIMU.__monostate = {}
-			
-			self.initializeFirstInstance()
-		else:
-			self.__dict__ = BerryIMU.__monostate
-		
-	def initializeFirstInstance(self):
-		print "Initializing first instance"
-		self.b = BerryIMUReader()
-		self.startCount = 0
-		self.t = threading.Thread(target=self.b.run)
-		self.t.daemon=False
-		
-		#signal.signal(signal.SIGINT, self.signalStop)
-		#signal.signal(signal.SIGTERM, self.signalStop)
-		pass
-	
-	
-	def start(self):
-		
-	
-		# if we haven't already been started, start our thread
-		if self.startCount == 0:
-			self.t.start()
-		
-		self.startCount += 1
-		print "start count is now: " + str(self.startCount)
 
-	def stop(self):
-		
-		self.startCount -= 1
-		
-		print "start count is now: " + str(self.startCount)
-		# it our startstop count is now 0, tell our reader to stop
-		if self.startCount ==0:
-			self.b.stop()
-			
-
+class BerryIMU():
 	
+
+	def disconnect(self):
+		global _connectedClientCount
+		_connectedClientCount = _connectedClientCount -1
+		# if this our last client, tell the reader to stop
+		if _connectedClientCount == 0:
+			_berryIMUReader.stop()
 		
 	def readLatestIMU(self):
-		return self.b.readLatestIMU()
+		return readLatestIMU()
 
 
 
+_berryIMUReader = BerryIMUReader()
+_connectedClientCount = 0
+_runnerThread = threading.Thread(target=_berryIMUReader.run)
+_runnerThread.daemon = False
+
+def connect():
+	global _connectedClientCount
+	global _runnerThread
+	
+	if _connectedClientCount == 0:
+		# if this is our first client, increment count and start our thread
+		_connectedClientCount = _connectedClientCount + 1
+		_runnerThread.start()
+	else:
+		# otherwise just increment our count
+		_connectedClientCount + _connectedClientCount + 1
+	
+	# if this is our first client, start our reader
+	
+	return BerryIMU() 
+
+def readLatestIMU():
+	return _berryIMUReader.readLatestIMU()
 
 class ServiceExit(Exception):
     """
@@ -605,23 +587,21 @@ if __name__ == "__main__":
 
 	
 	# module wide variable. This gets run when the module is loaded
-	runner = BerryIMU()
-	runner.start()
-
-	runner2 = BerryIMU()
-	runner2.start()
-
+	myIMU = connect()
+	myIMU2 = connect()
 	
 	
 	try:
 		while True:
 		
 			#latest = latestIMU()
-			latest = runner.readLatestIMU()
-			latest2 = runner2.readLatestIMU()
-			#if latest:
-			#	print str(latest) + "\n 2:" + str(latest2)
+			latest = myIMU.readLatestIMU()
+			latest2 = myIMU2.readLatestIMU()
+			if latest:
+				#print str(latest) + "\n 2:" + str(latest2)
+			#print latest
+				pass
 			time.sleep(0.5)
 	except ServiceExit:
-		runner.stop()
-		runner2.stop()
+		myIMU.disconnect()
+		
